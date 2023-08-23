@@ -1,0 +1,476 @@
+---
+title: "Final Project"
+author: "Britt Kravets"
+date: 'Due Date:  04/30/2023 by 11:59 PM EST'
+output:
+  word_document: default
+  pdf_document: default
+---
+
+# *Problem 1*
+
+Use the following codes to obtain a table.
+
+```{r}
+Data1 <- read.table("Data1.dat",header = TRUE)
+
+Data1$Level[Data1$Level==0] <- "Level0"
+Data1$Level[Data1$Level==1] <- "Level1"
+Data1$Level[Data1$Level==2] <- "Level2"
+Data1$Male[Data1$Male==0] <- "female"
+Data1$Male[Data1$Male==1] <- "male"
+Data1$Night[Data1$Night==0] <- "daylight"
+Data1$Night[Data1$Night==1] <- "night"
+Data1$Wet[Data1$Wet==0] <- "dry"
+Data1$Wet[Data1$Wet==1] <- "wet"
+Data1$LD[Data1$LD==0] <- "no"
+Data1$LD[Data1$LD==1] <- "yes"
+
+Tab1 <- aggregate(Data1$Count,
+           by=list(Level=Data1$Level, Male=Data1$Male, LD=Data1$LD),
+           FUN=sum)
+names(Tab1)[4]="Count"
+Tab1
+```
+
+## Problem 1 Part a
+
+(a) Reorganize the data to get a 3 × 2 × 2 contingency table containing **Level**, **Male**, and **LD** and present the table using functions xtabs and ftable. [3 pts]
+
+```{r}
+Tab1.2 <- ftable(xtabs(Count~Level + Male + LD, data=Tab1),
+       col.vars="LD")
+Tab1.2
+```
+
+## Problem 1 Part b
+
+(b) Calculate the observed conditional odds ratios giving the effectiveness of reducing lane departure occurrence for **males** compared to **females** given each level of RDAS-HC system and compare the conditional odds ratios to the marginal odds ratio between **Male** and **LD**. Present these using a nice table (Hint: you may need to use the tapply function). [7 pts]
+
+For level 0, males were 1.9 times less likely to have lane deviation than females, for level 1 males were 2.6 times less likely to have lane deviation than females, and for level 2 males were 1.7 times less likely to have lane deviation. Overall, the marginal odds ratio was 2.0, indicating that the system worked two times better for males at avoiding lane deviation when disregarding level.
+
+```{r}
+or <- function(x) x[1,1]*x[2,2]/x[1,2]/x[2,1]
+Level0.OR <- 1/round(or(Tab1.2[1:2, ]), 3)
+Level1.OR <- 1/round(or(Tab1.2[3:4, ]), 3)
+Level2.OR <- 1/round(or(Tab1.2[5:6, ]), 3)
+Marg.OR <- (47+77+82)*(50+116+84)/(121+121+170)/(10+28+24)
+ors <- data.frame(rbind(Level0.OR,Level1.OR,Level2.OR,Marg.OR))
+ors
+
+```
+
+## Problem 1 Parts c & d
+
+(c) Use the Cochran-Maentel-Haenszel method to test for conditional independence of gender and lane departure, given the level of RDAS-HC. [5 pts]
+(d) Give a 95% confidence interval for the common odds ratio based on the CMH method. [5 pts]
+
+The p-value of the CMH test was 7.338x10^-6, indicating that gender and lane departure are conditionlly dependent given level of RDAS-HC. The common odds ratio was 2.09 with a 95% CI of (1.51, 2.90), again telling us that males had higher odds of avoiding lane departure than femles.
+
+```{r}
+data <- expand.grid(Response = c("LD0", "LD1"),
+                    Gender = c("Male","Female"),
+                    Level = c(0,1,2))
+data$count <- c(47,121,10,50,77,121,28,116,82,170,24,84)
+data <- data[order(data$Response), ]
+tab1.3 <- tapply(data$count, data[,c(2,1,3)],sum)
+tab1.3
+
+cmh.test <- mantelhaen.test(tab1.3, correct=F)
+cmh.test
+```
+
+
+\newpage
+# *Problem 2*
+
+Use data1.dat and treat **LD** as the response variable and other variables as predictors. **(Please just use data1.dat and do not run the codes in Problem 1)**.
+ 
+## Problem 2 Part a
+
+(a) Reorganize the data so that the resulting data frame contains two columns that contain the counts of **LD yes** and **LD no**, respectively. [3 pts]
+
+```{r}
+Tab1.logit <- data.frame(expand.grid(Level=c("Level0","Level1","Level2"),
+                                     Male=c("female","male"), 
+                                     Night=c("daylight","night"), Wet=c("dry","wet")),
+                         LDno=Data1$Count[1:24],
+                         LDyes=Data1$Count[25:48])
+Tab1.logit
+```
+
+## Problem 2 Part b
+
+(b) Fit a saturated logit model and use step function to select a model. [7 pts]
+
+The backward selection chose a model including Level, Male, Night, Wet, LevelxWet, and MalexNight.
+
+```{r}
+options(contrasts=c("contr.SAS","contr.poly"))
+logit.sat <- glm(cbind(LDno,LDyes) ~.^4, data=Tab1.logit, family=binomial)
+logit.step <- step(logit.sat, direction = "backward")
+
+summary(logit.step)
+```
+
+## Problem 2 Part c
+
+(c) Obtain the standardized Pearson residuals from the model selected in part (b). What do you conclude? [5 pts]
+
+When it's dry, males have slightly worse performance than females. When it's wet females have worse performance than males. Overall, for both genders and regardless of the light condition, performance was slightly worse when the road was wet. The level of RDAS-HC does not appear to make much difference based on these residuals.
+
+```{r}
+pear.indep <- resid(logit.step, type="pearson")
+pear.std.indp <- pear.indep/sqrt(1-lm.influence(logit.step)$hat)
+
+residtab <- data.frame(cbind(Tab1.logit),pear.std.indp)
+residtab
+```
+
+## Problem 2 Part d
+
+(d) Test whether the association between RDAS-HC level and lane departure is homogeneous, given the other variables. (Hint: which logit model implies the homogeneous association). [5 pts]
+
+Main effects model for logit implies homogeneous association. The main effects model fits well, so we can assume homogeneous association.
+
+```{r}
+fit.maineff <- glm(cbind(LDno,LDyes) ~., data=Tab1.logit, family=binomial)
+models <- list(fit.maineff,logit.step)
+mod.G2 <- sapply(models,function(x)x$deviance)
+mod.X2 <- sapply(models,function(x) sum(residuals(x,type="pearson")^2))
+mod.df <- sapply(models,function(x) x$df.resid)
+mod.pval <- pchisq(mod.G2,mod.df,lower=F)
+mod.AIC <- sapply(models,function(x) x$aic)
+lackFit <- data.frame(G2=mod.G2,X2=mod.X2,df=mod.df,pval=mod.pval,AIC=mod.AIC)
+rownames(lackFit) <- c("Main effects","Model from part b")
+round(lackFit, 4)
+
+```
+
+## Problem 2 Part e
+
+(e) Use likelihood ratio test to test for conditional independence of RDAS-HC and response, given the other variables. Be sure to clearly state the model and hypothesis you are testing. [5 pts]
+
+I am testing the null hypothesis of whether all beta's in the model equal zero, versus the alternative that at least one does not equal zero. We get a p-value of 0.92, so we can accept the null hypothesis that all beta's equal zero. So, we can say that there is conditional independence between RDAS-HC level and the response, given the other variables.
+
+```{r}
+logit.step$deviance
+pchisq(logit.step$deviance, logit.step$df.residual, lower=F)
+```
+
+## Problem 2 BONUS
+
+Bonus: Use the Wald test to test for conditional independence of RDAS-HC and response, given the other variables. [5 pts]
+
+The wald test for conditional independence is given in the summary of the logistic regression. When I test the model given in part b, we see that the wald p-value for level 0 vs. level 2 is  0.46, and the p-value for level 1 vs. level 2 is 0.32, suggesting that RDAS-HC level and response are conditionally independent, given the other variables.
+
+```{r}
+summary(logit.step)
+```
+
+
+## Problem 2 Part f
+
+(f) Draw the ROC curve for the model selected in Part (b). You may use or modify the following codes to create a suitable data structure. Let Tab2 be the data frame you created in (a) and the column names of LD Yes and No be Yes and No. I assume that they are columns 5 and 6. If not, you can modify the codes.
+```{r}
+#Tab3.1=(Tab2[rep(seq_len(nrow(Tab2)), Tab2$No),])[,-c(5,6)]
+#Tab3.1$y = 0
+#Tab3.2=(Tab2[rep(seq_len(nrow(Tab2)), Tab2$Yes),])[,-c(5,6)]
+#Tab3.2$y = 1
+#Tab3=rbind(Tab3.1, Tab3.2)
+```
+Fit Tab3 with the model you selected in Part 2(b) and produce the ROC curve.
+
+When we look at the ROC curve, we can see that the area below the curve equals 0.563, implying that the predictive power of the the model selected in part b is moderate.
+
+```{r}
+Tab2.1=(Tab1.logit[rep(seq_len(nrow(Tab1.logit)), Tab1.logit$LDno),])[,-c(5,6)]
+Tab2.1$y = 0
+Tab2.2=(Tab1.logit[rep(seq_len(nrow(Tab1.logit)), Tab1.logit$LDyes),])[,-c(5,6)]
+Tab2.2$y = 1
+Tabroc=rbind(Tab2.1, Tab2.2)
+
+fit.roc <- glm(y ~ Level + Male + Night + Wet + Level*Night + Level*Wet + Male*Night + Night*Wet + Level*Night*Wet,
+               data=Tabroc, family=binomial)
+
+
+pihat <- predict(fit.roc,type="response")
+
+pi0 <- seq(0.05,0.95,by=.05)
+fun <- function(x,y) ifelse(x>y,1,0)
+sensfun <-function(ypred) sum(ypred[Tabroc$y==1]==1)/sum(Tabroc$y==1)
+specfun <-function(ypred) sum(ypred[Tabroc$y==0]==0)/sum(Tabroc$y==0)
+roc <- function(arg1) {
+  yhat <- outer(arg1,pi0,fun)
+  sens <- apply(yhat,2,sensfun)
+  spec <- apply(yhat,2,specfun)
+  data.frame(sens=sens,spec=spec)
+}
+
+x <- roc(pihat)
+f <- approxfun(1-x$spec,x$sens)
+area <- integrate(f,0.05,0.95)$value
+plot(1-x$spec,x$sens,xlab="1 - specificity",
+       ylab="sensitivity",pch=19)
+
+area <- round(area,3)
+area
+```
+
+\newpage
+# *Problem 3*
+
+Use data2.dat and treat **Distraction** as a **nominal** response variable and other variables as predictors.
+
+```{r}
+Data2 <- read.table("Data2.dat",header = TRUE)
+Data2$Level[Data2$Level==0] <- "Level0"
+Data2$Level[Data2$Level==1] <- "Level1"
+Data2$Level[Data2$Level==2] <- "Level2"
+Data2$Male[Data2$Male==0] <- "female"
+Data2$Male[Data2$Male==1] <- "male"
+Data2$Distraction <- factor(Data2$Distraction)
+```
+
+## Problem 3 Part a
+
+(a) Fit a multinomial regression with variables **Level** and **Male**. Whether the interaction term should be included in the model? [5 pts]
+
+When we contrast the multinomial regression with and without an interaction term for level and male, we can see that the anova test gives a p-value of 0, suggesting a significant difference between these models. We can see that the model with interaction has a lower AIC score, suggesting that it is a better model, so we would assume that we do need the interaction term.
+
+```{r}
+library(nnet)
+options(contrasts=c("contr.SAS","contr.poly"))
+fit3.1 <- multinom(Distraction ~ Level+Male, data=Data2, weights=Count, trace=F)
+fit3.2 <- multinom(Distraction ~ Level*Male, data=Data2, weights=Count, trace=F)
+
+anova(fit3.1,fit3.2,test="Chisq")
+
+summary(fit3.1)
+summary(fit3.2)
+```
+
+## Problem 3 Part b
+
+(b) Based on the model in part (a), calculate the fitted counts for each combination of levels of **Distraction**, **Level** and **Male** (Hint: follow the gator food example) [5 pts]
+
+```{r}
+newdata <- expand.grid(Level=c("Level0","Level1","Level2"),
+                       Male=c("female","male"))
+marg.count <- as.vector(tapply(Data2$Count, list(Data2$Level,Data2$Male),
+                               sum))
+pred.count <- predict(fit3.2, newdata, type="probs")*marg.count
+pred.count <- round(pred.count, 3)
+newdata <- cbind(newdata, pred.count)
+newdata
+```
+
+\newpage
+# *Problem 4*
+
+Use data2.dat and treat **Distraction** as an **ordinal** response variable and other variables as predictors.
+
+## Problem 4 Part a
+
+(a) Fit a cumulative logit model with variables **Level** and **Male**. Whether the interaction term should be included in the model? (Hint: you may use the function vglm with logit link) [5 pts]
+
+I could not get the regression to work using vglm, but I was able to do it using polr and lrm. Similar to the above, the AIC is lower for the interaction model, implying that it is the better model. 
+
+```{r}
+Data2 <- read.table("Data2.dat",header = TRUE)
+Data2$Distraction <- factor(Data2$Distraction)
+
+library(rms)
+fit3.3 <- lrm(Distraction ~ Level+Male, data=Data2, weights=Count)
+fit3.3
+
+fit3.4 <- lrm(Distraction ~ Level*Male, data=Data2, weights=Count)
+fit3.4
+
+library(MASS)
+fit3.7 <- polr(Distraction ~ Level+Male, data=Data2, weight=Count)
+summary(fit3.7)
+
+fit3.8 <- polr(Distraction ~ Level*Male, data=Data2, weight=Count)
+summary(fit3.8)
+
+#library(VGAM)
+#fit3.5 = vglm(Distraction ~ Level+Male, family=cumulative(link = "logitlink", parallel = FALSE), data=Data2)
+#fit3.5
+#g2.add.o = deviance(fit3.5)
+#df.add.o = df.residual(fit3.5)
+#1 - pchisq(g2.add.o, df.add.o)
+
+#fit3.6 = vglm(Distraction ~ Level*Male, family=cumulative(link = "logitlink", parallel = FALSE), data=Data2)
+#g2.add = deviance(fit3.6)
+#df.add = df.residual(fit3.6)
+#1 - pchisq(g2.add, df.add)
+
+```
+
+
+## Problem 4 Part b
+
+(b) Based on the model in part (a), what are P (Distraction ≤ 0) for a male using level 1 and 2? [5 pts]
+
+For a male using level 1, the probability that Distraction is less than or equal to zero is 0.481 and for a male using level 2, the probability that Distraction is less than or equal zero is 0.399.
+
+```{r}
+newdata <- data.frame(expand.grid(Level=c(1,2), Male=1))
+newdata <- cbind(newdata,predict(fit3.3,newdata,type="fitted"))
+newdata
+
+1-0.5189977	
+1-0.6011562	
+```
+
+\newpage
+# *Problem 5*
+
+Use data3.dat. Recall that **Distraction** and **LD** are response variables.
+
+```{r}
+Data3 <- read.table("Data3.dat",header = TRUE)
+Data3$Level <- factor(Data3$Level)
+Data3$Male[Data3$Male==0] <- "female"
+Data3$Male[Data3$Male==1] <- "male"
+Data3$Night[Data3$Night==0] <- "daylight"
+Data3$Night[Data3$Night==1] <- "night"
+Data3$Wet[Data3$Wet==0] <- "dry"
+Data3$Wet[Data3$Wet==1] <- "wet"
+Data3$LD[Data3$LD==0] <- "no"
+Data3$LD[Data3$LD==1] <- "yes"
+Data3$Distraction <- factor(Data3$Distraction)
+```
+
+## Problem 5 Part a
+
+(a) Fit a log linear model including the main effects of **Distraction** and **LD** and the interaction terms between **Level**, **Male**, **Night**, and **Wet**. Could we drop the interaction term? [5 pts]
+
+When we compare the model with the 4-way interaction term, a model found using backwards selection form the 4-way interaction term model, and the main effects model, we find that they all fit fine but the model with the best fit is model found with backwards selection (which does not have the 4-way interaction term). So, when comparing these models, we can say that we can drop the interaction term. 
+
+```{r}
+fit.4waymod <- glm(Count ~. + Level*Male*Night*Wet, data = Data3, family = poisson)
+fit.main <- glm(Count ~., data = Data3, family = poisson)
+fit.backward4 <- step(fit.4waymod, direction = "backward")
+
+models <- list(fit.4waymod,fit.backward4,fit.main)
+mod.G2 <- sapply(models,function(x)x$deviance)
+mod.X2 <- sapply(models,function(x) sum(residuals(x,type="pearson")^2))
+mod.df <- sapply(models,function(x) x$df.resid)
+mod.pval <- pchisq(mod.G2,mod.df,lower=F)
+mod.AIC <- sapply(models,function(x) x$aic)
+lackFit <- data.frame(G2=mod.G2,X2=mod.X2,df=mod.df,pval=mod.pval,AIC=mod.AIC)
+rownames(lackFit) <- c("4-way mod","Backward fit","Main effects")
+round(lackFit, 10)
+
+res.4way <- resid(fit.4waymod, type = "pearson")/sqrt(1 -lm.influence(fit.4waymod)$hat)
+res.main <- resid(fit.main, type = "pearson")/sqrt(1
+              - lm.influence(fit.main)$hat)
+res.backward4 <- resid(fit.backward4, type = "pearson")/sqrt(1
+              - lm.influence(fit.backward4)$hat)
+summary(res.4way)
+summary(res.main)
+summary(res.backward4)
+```
+
+
+
+## Problem 5 Part b
+
+(b) Start with the model in Part (a) and carry out a forward selection. [5 pts]
+
+```{r}
+fit.forward4 <- step(fit.4waymod, scope = list(upper = ~.^6), direction = "forward")
+summary(fit.forward4)
+fit.forward4$deviance
+```
+
+## Problem 5 Part c
+
+(c) Draw the association graph for the model selected in Part (b). [5 pts]
+
+
+## Problem 5 Part d
+
+(d) Test whether **Distraction** and **LD** are conditionally independent given other variables in the model from Part (b)? [5 pts]
+
+```{r}
+fit.noLD <- glm(Count ~. + Level + Male + Night + Wet + LD + Distraction + Level*Male + 
+    Level*Night + Male*Night + Level*Wet + Male*Wet + Night*Wet + Male*Distraction + Male*LD + Level*Male*Night + 
+    Level*Male*Wet + Level*Night*Wet + Male*Night*Wet + 
+    Level*Male*Night*Wet, 
+                data = Data3, family = poisson)
+
+summary(fit.noLD)
+
+models <- list(fit.noLD,fit.backward4)
+mod.G2 <- sapply(models,function(x)x$deviance)
+mod.X2 <- sapply(models,function(x) sum(residuals(x,type="pearson")^2))
+mod.df <- sapply(models,function(x) x$df.resid)
+mod.pval <- pchisq(mod.G2,mod.df,lower=F)
+mod.AIC <- sapply(models,function(x) x$aic)
+lackFit <- data.frame(G2=mod.G2,X2=mod.X2,df=mod.df,pval=mod.pval,AIC=mod.AIC)
+rownames(lackFit) <- c("Backward fit without LD int.","Backward fit")
+round(lackFit, 10)
+
+res.noLD <- resid(fit.noLD, type = "pearson")/sqrt(1 -lm.influence(fit.noLD)$hat)
+summary(res.noLD)
+```
+
+## Problem 5 Part e
+
+(e) Whether the model from Part (b) is equivalent to the main effects logit model or the model with two-way interactions if treating LD as the binary response variable? Justify your answer [5 pts]
+
+The model chosen in part b is (DLdM, LeMNW) which would not be equivalent to either the main effects logit model of the two-way interaction logit model. In order to be equivalent to the main effects logit model, the log linear model would need a five-way interaction term. Similarly, this log linear model is missing terms that would be necessary for the two-way interaction logit model.
+
+```{r}
+Tab3orig <- ftable(xtabs(Count~Level+Male+Night+Wet+Distraction+LD, data=Data3))
+
+Data3.1 <- data.frame(expand.grid(Level=c("Level0","Level1","Level2"),
+                                     Male=c("female","male"), 
+                                     Night=c("daylight","night"), Wet=c("dry","wet"),
+                                     Distraction=c("-3","-2","-1","0","1","2","3"),
+                                    LD=c("no","yes")),
+                         Count=Tab3orig[1:336])
+
+Tab5.logit <- data.frame(expand.grid(Level=c("Level0","Level1","Level2"),
+                                     Male=c("female","male"), 
+                                     Night=c("daylight","night"), Wet=c("dry","wet"),
+                                     Distraction=c("-3","-2","-1","0","1","2","3")),
+                        LDno=Data3.1$Count[1:168],
+                         LDyes=Data3.1$Count[169:336])
+#Tab5.logit
+
+logit.maineff <- glm(cbind(LDyes,LDno) ~., data=Tab5.logit, family=binomial)
+logit.2way <- glm(cbind(LDyes,LDno) ~.^2, data=Tab5.logit, family=binomial)
+
+summary(logit.maineff)
+summary(logit.2way)
+logit.maineff$deviance
+logit.2way$deviance
+```
+
+## Problem 5 Part f
+
+(f) Is the model from Part (b) lack of fit? Justify your answer. [5 pts]
+
+The model from part b have a p-value of 0.9999 when testing for fit with the saturated model, so this suggests a good fit. However, when we look at the standardize pearson residuals, the minimum is -inf, suggesting a poor fit. Because of this residual, I would not be able to say confidently that this model has a good fit. 
+
+```{r}
+models <- list(fit.forward4,fit.4waymod,fit.backward4,fit.main)
+mod.G2 <- sapply(models,function(x)x$deviance)
+mod.X2 <- sapply(models,function(x) sum(residuals(x,type="pearson")^2))
+mod.df <- sapply(models,function(x) x$df.resid)
+mod.pval <- pchisq(mod.G2,mod.df,lower=F)
+mod.AIC <- sapply(models,function(x) x$aic)
+lackFit <- data.frame(G2=mod.G2,X2=mod.X2,df=mod.df,pval=mod.pval,AIC=mod.AIC)
+rownames(lackFit) <- c("Forward fit (b)","4-way mod","Backward fit","Main effects")
+round(lackFit, 5)
+
+res.forward4 <- resid(fit.forward4, type = "pearson")/sqrt(1-lm.influence(fit.forward4)$hat)
+summary(res.forward4)
+```
+
+\newpage
+# *Problem 6: Report*
